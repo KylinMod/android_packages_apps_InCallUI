@@ -22,8 +22,6 @@ package com.android.incallui;
 
 import android.animation.LayoutTransition;
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.kylin.location.PhoneLocation;
 import android.kylin.util.KyLinUtils;
@@ -32,6 +30,7 @@ import static android.telephony.TelephonyManager.SIM_STATE_ABSENT;
 import android.telephony.MSimTelephonyManager;
 import android.os.SystemProperties;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -67,6 +66,7 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
     private TextView mProviderNumber;
     private TextView mSubscriptionId;
     private ViewGroup mSupplementaryInfoContainer;
+    private TextView mCallRecordingTimer;
 
     // Secondary caller info
     private ViewStub mSecondaryCallInfo;
@@ -95,6 +95,29 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
      */
     static final String PROPERTY_IMS_AUDIO_OUTPUT =
                                 "persist.radio.ims.audio.output";
+
+    private CallRecorder.RecordingProgressListener mRecordingProgressListener =
+            new CallRecorder.RecordingProgressListener() {
+        @Override
+        public void onStartRecording() {
+            mCallRecordingTimer.setText(DateUtils.formatElapsedTime(0));
+            mCallRecordingTimer.setVisibility(View.VISIBLE);
+        }
+
+        @Override
+        public void onStopRecording() {
+            mCallRecordingTimer.setVisibility(View.GONE);
+        }
+
+        @Override
+        public void onRecordingTimeProgress(final long elapsedTimeMs) {
+            long elapsedSeconds = (elapsedTimeMs + 500) / 1000;
+            mCallRecordingTimer.setText(DateUtils.formatElapsedTime(elapsedSeconds));
+
+            // make sure this is visible in case we re-loaded the UI for a call in progress
+            mCallRecordingTimer.setVisibility(View.VISIBLE);
+        }
+    };
 
     /**
      * A subclass of ImageView which allows animation by LayoutTransition
@@ -177,6 +200,10 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         mSupplementaryInfoContainer =
             (ViewGroup) view.findViewById(R.id.supplementary_info_container);
         mVideoCallPanel = (VideoCallPanel) view.findViewById(R.id.videoCallPanel);
+        mCallRecordingTimer = (TextView) view.findViewById(R.id.callRecordingTimer);
+
+        CallRecorder recorder = CallRecorder.getInstance();
+        recorder.addRecordingProgressListener(mRecordingProgressListener);
 
         ViewGroup photoContainer = (ViewGroup) view.findViewById(R.id.photo_container);
         LayoutTransition transition = photoContainer.getLayoutTransition();
@@ -193,6 +220,9 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
             mVideoCallPanel.onDestroy();
             mVideoCallPanel = null;
         }
+
+        CallRecorder recorder = CallRecorder.getInstance();
+        recorder.removeRecordingProgressListener(mRecordingProgressListener);
     }
 
     @Override
@@ -366,7 +396,8 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
 
     @Override
     public void setCallState(int state, Call.DisconnectCause cause, boolean bluetoothOn,
-            String gatewayLabel, String gatewayNumber, boolean isHeldRemotely, int callType) {
+            String gatewayLabel, String gatewayNumber, boolean isWaitingForRemoteSide,
+            int callType) {
         String callStateLabel = null;
 
         // If this is a video call then update the state of the VideoCallPanel
@@ -379,7 +410,7 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         }
 
         // States other than disconnected not yet supported
-        callStateLabel = getCallStateLabelFromState(state, cause, isHeldRemotely);
+        callStateLabel = getCallStateLabelFromState(state, cause, isWaitingForRemoteSide);
 
         Log.v(this, "setCallState " + callStateLabel);
         Log.v(this, "DisconnectCause " + cause);
@@ -512,7 +543,7 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
      * cause of disconnect
      */
     private String getCallStateLabelFromState(int state, Call.DisconnectCause cause,
-            boolean isHeldRemotely) {
+            boolean isWaitingForRemoteSide) {
         final Context context = getView().getContext();
         String callStateLabel = null;  // Label to display as part of the call banner
 
@@ -522,13 +553,13 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         } else if (Call.State.ACTIVE == state) {
             // We normally don't show a "call state label" at all in
             // this state (but see below for some special cases).
-            if (isHeldRemotely) {
+            if (isWaitingForRemoteSide) {
                 callStateLabel = context.getString(R.string.card_title_waiting_call);
             }
         } else if (Call.State.ONHOLD == state) {
             callStateLabel = context.getString(R.string.card_title_on_hold);
         } else if (Call.State.DIALING == state) {
-            callStateLabel = context.getString(isHeldRemotely
+            callStateLabel = context.getString(isWaitingForRemoteSide
                     ? R.string.card_title_dialing_waiting : R.string.card_title_dialing);
         } else if (Call.State.REDIALING == state) {
             callStateLabel = context.getString(R.string.card_title_redialing);
